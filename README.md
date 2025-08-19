@@ -36,7 +36,7 @@ A high-performance HTTP mock server that serves responses from a PostgreSQL data
    
    Create the required table:
    ```sql
-   CREATE TABLE IF NOT EXISTS return.mock_responses (
+   CREATE TABLE IF NOT EXISTS mock_responses (
        id SERIAL PRIMARY KEY,
        path VARCHAR(500) NOT NULL,
        method VARCHAR(10) NOT NULL,
@@ -71,7 +71,7 @@ Insert mock responses into the database:
 
 ```sql
 -- Example: GET request
-INSERT INTO return.mock_responses (path, method, response_body, headers, response_status_code) 
+INSERT INTO mock_responses (path, method, response_body, headers, response_status_code) 
 VALUES (
     '/api/users/123', 
     'GET', 
@@ -81,7 +81,7 @@ VALUES (
 );
 
 -- Example: POST request
-INSERT INTO return.mock_responses (path, method, response_body, headers, response_status_code) 
+INSERT INTO mock_responses (path, method, response_body, headers, response_status_code) 
 VALUES (
     '/api/users', 
     'POST', 
@@ -91,7 +91,7 @@ VALUES (
 );
 
 -- Example: With query parameters
-INSERT INTO return.mock_responses (path, method, response_body, headers, response_status_code) 
+INSERT INTO mock_responses (path, method, response_body, headers, response_status_code) 
 VALUES (
     '/api/users?active=true&page=1', 
     'GET', 
@@ -101,7 +101,7 @@ VALUES (
 );
 
 -- Example: Error response
-INSERT INTO return.mock_responses (path, method, response_body, headers, response_status_code) 
+INSERT INTO mock_responses (path, method, response_body, headers, response_status_code) 
 VALUES (
     '/api/users/999', 
     'GET', 
@@ -130,7 +130,7 @@ curl -X GET "http://localhost:8080/api/users?active=true&page=1"
 
 ## 📊 Database Schema
 
-### Table: `return.mock_responses`
+### Table: `mock_responses`
 
 | Column | Type | Description |
 |--------|------|-------------|
