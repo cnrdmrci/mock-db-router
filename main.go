@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -22,11 +25,53 @@ var (
 )
 
 type MockResponse struct {
-	Path               string
-	Method             string
 	ResponseBody       string
 	ResponseStatusCode int
-	Headers            string
+	Headers            sql.NullString
+}
+
+func readRequestBody(r *http.Request) (string, error) {
+	var requestBody string
+	if r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			return "", fmt.Errorf("error reading request body: %v", err)
+		}
+		requestBody = string(bodyBytes)
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
+	return requestBody, nil
+}
+
+func validateAndReturnJSON(requestBody string) (string, error) {
+	if requestBody == "" {
+		return "", nil
+	}
+
+	var temp interface{}
+	if err := json.Unmarshal([]byte(requestBody), &temp); err != nil {
+		return "", nil
+	}
+
+	return requestBody, nil
+}
+
+func writeResponse(w http.ResponseWriter, mockResp *MockResponse) {
+	headers := parseHeaders(mockResp.Headers)
+	for key, value := range headers {
+		w.Header().Set(key, value)
+	}
+
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+
+	statusCode := mockResp.ResponseStatusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	w.WriteHeader(statusCode)
+	w.Write([]byte(mockResp.ResponseBody))
 }
 
 func initDB() error {
@@ -52,15 +97,37 @@ func initDB() error {
 	return err
 }
 
-func getMockResponse(path string, method string) (*MockResponse, error) {
+func getMockResponse(path string, method string, requestBodyJSON string) (*MockResponse, error) {
 	var mockResp MockResponse
-	query := "SELECT path, method, response_body, headers, response_status_code FROM return.mock_responses WHERE path = $1 AND method = $2"
+
+	var query string
+	var args []interface{}
+
+	if requestBodyJSON == "" {
+		query = `
+			SELECT response_body, headers, response_status_code 
+			FROM return.mock_responses 
+			WHERE path = $1 
+			  AND method = $2 
+			  AND request_body IS NULL
+		`
+		args = []interface{}{path, method}
+	} else {
+		query = `
+			SELECT response_body, headers, response_status_code 
+			FROM return.mock_responses 
+			WHERE path = $1 
+			  AND method = $2 
+			  AND md5(request_body::jsonb::text) = md5($3::jsonb::text)
+		`
+		args = []interface{}{path, method, requestBodyJSON}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	row := db.QueryRowContext(ctx, query, path, method)
-	err := row.Scan(&mockResp.Path, &mockResp.Method, &mockResp.ResponseBody, &mockResp.Headers, &mockResp.ResponseStatusCode)
+	row := db.QueryRowContext(ctx, query, args...)
+	err := row.Scan(&mockResp.ResponseBody, &mockResp.Headers, &mockResp.ResponseStatusCode)
 
 	if err != nil {
 		return nil, err
@@ -69,13 +136,13 @@ func getMockResponse(path string, method string) (*MockResponse, error) {
 	return &mockResp, nil
 }
 
-func parseHeaders(headerStr string) map[string]string {
+func parseHeaders(headerStr sql.NullString) map[string]string {
 	headers := make(map[string]string)
-	if headerStr == "" {
+	if !headerStr.Valid || headerStr.String == "" {
 		return headers
 	}
 
-	pairs := strings.Split(headerStr, ";")
+	pairs := strings.Split(headerStr.String, ";")
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
@@ -102,39 +169,35 @@ func buildFullPath(r *http.Request) string {
 }
 
 func proxyHandler(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-
 	urlPath := buildFullPath(r)
 	method := r.Method
-	fmt.Printf("Method: %s, Path: %s\n", method, urlPath)
 
-	mockResp, err := getMockResponse(urlPath, method)
+	requestBody, err := readRequestBody(r)
+	if err != nil {
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		log.Printf("Error reading request body: %v", err)
+		return
+	}
+
+	validatedJSON, err := validateAndReturnJSON(requestBody)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		log.Printf("Invalid JSON: %v", err)
+		return
+	}
+
+	mockResp, err := getMockResponse(urlPath, method, validatedJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// No mock response found, return 404
 			http.NotFound(w, r)
 			return
 		}
-
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		log.Printf("Database error: %v", err)
 		return
 	}
 
-	headers := parseHeaders(mockResp.Headers)
-	for key, value := range headers {
-		w.Header().Set(key, value)
-	}
-
-	if w.Header().Get("Content-Type") == "" {
-		w.Header().Set("Content-Type", "application/json")
-	}
-
-	statusCode := mockResp.ResponseStatusCode
-	if statusCode == 0 {
-		statusCode = http.StatusOK // Default to 200 if not specified
-	}
-	w.WriteHeader(statusCode)
-	w.Write([]byte(mockResp.ResponseBody))
+	writeResponse(w, mockResp)
 }
 
 func registerHandlers(router *httprouter.Router, path string, handler httprouter.Handle) {
