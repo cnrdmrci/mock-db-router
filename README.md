@@ -36,15 +36,15 @@ A high-performance HTTP mock server that serves responses from a PostgreSQL data
    
    Create the required table:
    ```sql
-   CREATE TABLE IF NOT EXISTS mock_responses (
+   CREATE TABLE IF NOT EXISTS public.mock_responses (
        id SERIAL PRIMARY KEY,
        path VARCHAR(500) NOT NULL,
        method VARCHAR(10) NOT NULL,
-       response_body TEXT,
+       request_body JSONB,
+       response_body JSONB NOT NULL,
        response_status_code INTEGER DEFAULT 200,
        headers TEXT,
-       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       UNIQUE(path, method)
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
    );
    ```
 
@@ -81,10 +81,11 @@ VALUES (
 );
 
 -- Example: POST request
-INSERT INTO mock_responses (path, method, response_body, headers, response_status_code) 
+INSERT INTO mock_responses (path, method, request_body, response_body, headers, response_status_code) 
 VALUES (
     '/api/users', 
-    'POST', 
+    'POST',
+    '{"name": "John Doe", "email": "john@example.com"}', 
     '{"message": "User created successfully", "id": 124}', 
     'Content-Type=application/json;Location=/api/users/124', 
     201
@@ -137,12 +138,11 @@ curl -X GET "http://localhost:8080/api/users?active=true&page=1"
 | `id` | SERIAL | Primary key |
 | `path` | VARCHAR(500) | Full URL path including query parameters |
 | `method` | VARCHAR(10) | HTTP method (GET, POST, PUT, DELETE, etc.) |
-| `response_body` | TEXT | Response content to return |
+| `request_body` | JSONB | Request body content |
+| `response_body` | JSONB | Response content to return |
 | `response_status_code` | INTEGER | HTTP status code (default: 200) |
 | `headers` | TEXT | Headers in "key=value;key2=value2" format |
 | `created_at` | TIMESTAMP | Record creation timestamp |
-
-**Unique Constraint**: `(path, method)` - Each path+method combination must be unique.
 
 ## ⚙️ Configuration
 
